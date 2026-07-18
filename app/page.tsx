@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { Suspense, useMemo, useRef, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { AlertTriangle, CheckCircle2, ChevronDown, Download, FileSpreadsheet, FileText, LoaderCircle, Play, Plus, RefreshCw, ShieldCheck, Trash2, Upload, XCircle } from "lucide-react";
 import type { AuditSummary, ColumnMapping, ComparisonRow, ComparisonStatus, InventoryRow, InventoryWorkbook, InvoiceFile, InvoiceLine } from "@/types/audit";
 import { extractPdfText } from "@/lib/pdf/extractPdfText";
@@ -16,11 +17,16 @@ const Button = ({ children, kind = "primary", className = "", ...props }: React.
 const Card = ({ children, className = "" }: { children: React.ReactNode; className?: string }) => <section className={`rounded-xl border border-slate-200 bg-white shadow-sm ${className}`}>{children}</section>;
 const uid = () => crypto.randomUUID();
 type AuditMode = "analyze" | "excel" | "manual";
+const URL_TO_MODE: Record<string, AuditMode> = { invoices: "analyze", inventory: "excel", manual: "manual" };
+const MODE_TO_URL: Record<AuditMode, string> = { analyze: "invoices", excel: "inventory", manual: "manual" };
 const formatSize = (bytes: number) => bytes ? `${(bytes / 1024 / 1024).toFixed(2)} MB` : "Demo";
 const money = (value: number, currency: string) => new Intl.NumberFormat("es-CR", { style: currency === "none" ? "decimal" : "currency", currency: currency === "none" ? undefined : currency, maximumFractionDigits: 2 }).format(value);
 
-export default function Home() {
-  const [mode, setMode] = useState<AuditMode | null>(null);
+function AuditIQApp() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const mode = URL_TO_MODE[searchParams.get("mode") ?? ""] ?? null;
   const [showFinal, setShowFinal] = useState(false);
   const [manualCounts, setManualCounts] = useState<Record<string, number | undefined>>({});
   const [files, setFiles] = useState<InvoiceFile[]>([]);
@@ -138,13 +144,14 @@ export default function Home() {
 
   const visibleLines = lines.filter((l) => (!filter || `${l.code} ${l.description}`.toLowerCase().includes(filter.toLowerCase())) && (!statusFilter || l.status === statusFilter) && (!fileFilter || l.fileName === fileFilter));
   const exportData = (partial: boolean) => { if (!mode) return; const exportMode = mode === "excel" && !inventoryBook ? "analyze" : mode; try { exportAuditReport({ summary, comparisons: exportMode === "analyze" ? [] : comparisons, consolidated, lines, files, inventory: exportMode === "excel" ? inventoryBook : undefined, partial, tolerance, mode: exportMode }); } catch { setNotice("Ocurrió un error al generar el archivo Excel."); } };
-  const newAudit = () => { setFiles([]); setLines([]); setInventoryBook(undefined); setInventory([]); setMapping({ code: "", description: "", quantity: "", cost: "" }); setManualCounts({}); setShowFinal(false); setMode(null); setNotice(""); };
+  const selectMode = (nextMode: AuditMode) => { const params = new URLSearchParams(searchParams.toString()); params.set("mode", MODE_TO_URL[nextMode]); router.replace(`${pathname}?${params.toString()}`, { scroll: false }); };
+  const newAudit = () => { setFiles([]); setLines([]); setInventoryBook(undefined); setInventory([]); setMapping({ code: "", description: "", quantity: "", cost: "" }); setManualCounts({}); setShowFinal(false); setNotice(""); const params = new URLSearchParams(searchParams.toString()); params.delete("mode"); const query = params.toString(); router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false }); };
 
   if (!mode) return <main className="grid min-h-screen place-items-center bg-[#f3f7f6] px-6 py-12"><div className="w-full max-w-5xl"><div className="mb-10 text-center"><div className="mx-auto mb-5 grid h-16 w-16 place-items-center rounded-2xl bg-teal-700 text-2xl font-black text-white shadow-lg">AIQ</div><h1 className="text-5xl font-black tracking-tight text-[#123a35]">AuditIQ</h1><p className="mt-3 text-lg font-medium text-slate-500">Smart Inventory Audits</p></div><div className="grid gap-5 md:grid-cols-3">{[
     { id: "analyze" as const, icon: <FileText size={26}/>, title: "Analizar facturas", description: "Procesa las facturas y genera un consolidado de productos y montos sin realizar comparaciones." },
     { id: "excel" as const, icon: <FileSpreadsheet size={26}/>, title: "Comparar con inventario", description: "Procesa las facturas y las compara automáticamente contra un inventario en Excel." },
     { id: "manual" as const, icon: <CheckCircle2 size={26}/>, title: "Capturar inventario manualmente", description: "Procesa las facturas y permite ingresar manualmente el conteo físico para calcular diferencias." },
-  ].map((option) => <Card key={option.id} className="flex min-h-72 flex-col p-6 transition hover:-translate-y-1 hover:border-teal-300 hover:shadow-lg"><div className="mb-5 grid h-12 w-12 place-items-center rounded-xl bg-teal-50 text-teal-700">{option.icon}</div><h2 className="text-xl font-bold">{option.title}</h2><p className="mt-3 flex-1 text-sm leading-6 text-slate-600">{option.description}</p><Button className="mt-6 w-full" onClick={() => setMode(option.id)}>Iniciar</Button></Card>)}</div><p className="mt-8 text-center text-xs text-slate-500">Procesamiento local y privado. Sus documentos no salen del navegador.</p></div></main>;
+  ].map((option) => <Card key={option.id} className="flex min-h-72 flex-col p-6 transition hover:-translate-y-1 hover:border-teal-300 hover:shadow-lg"><div className="mb-5 grid h-12 w-12 place-items-center rounded-xl bg-teal-50 text-teal-700">{option.icon}</div><h2 className="text-xl font-bold">{option.title}</h2><p className="mt-3 flex-1 text-sm leading-6 text-slate-600">{option.description}</p><Button className="mt-6 w-full" onClick={() => selectMode(option.id)}>Iniciar</Button></Card>)}</div><p className="mt-8 text-center text-xs text-slate-500">Procesamiento local y privado. Sus documentos no salen del navegador.</p></div></main>;
 
   if (showFinal) {
     const differences = comparisons.filter((r) => ["Faltante", "Sobrante", "No encontrado"].includes(r.status)).length;
@@ -180,4 +187,8 @@ export default function Home() {
       <Card className="p-6"><h2 className="font-bold">Limitaciones de esta versión</h2><ul className="mt-3 grid list-disc gap-2 pl-5 text-sm text-slate-600 md:grid-cols-2"><li>Solo se procesan PDFs con texto seleccionable.</li><li>Los PDFs escaneados requieren revisión manual.</li><li>Los formatos de factura pueden variar.</li><li>Los resultados deben ser validados por el auditor.</li><li>Los documentos no se almacenan en servidores.</li><li>No incluye OCR ni coincidencias aproximadas agresivas.</li></ul></Card>
     </div>
   </main>;
+}
+
+export default function Home() {
+  return <Suspense fallback={<main className="min-h-screen bg-[#f3f7f6]"/>}><AuditIQApp/></Suspense>;
 }
